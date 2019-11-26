@@ -7,7 +7,7 @@ resource "azurerm_virtual_machine_scale_set" "flask" {
   name                = "flask"
   location            = "West US"
   resource_group_name = "${azurerm_resource_group.flask.name}"
-  custom_data = "${file("${path.module}/data/launch_config.master.user_data")}"
+  custom_data = "${file("${path.module}/data/launch_config.nodes.user_data")}"
   upgrade_policy_mode = "Manual"
 
   sku {
