@@ -16,5 +16,7 @@ kubectl apply -f <manifest-files>
 
 
 Multi master set up for high availability can be configured with appropriate synchronous methods.
+
 Considering network resources are already created in this case and mentioned in variables. If not a VPC, subnets and firewall will be required.
+
 The apps are reachable outside the cluster with node IP and node Port mentioned, from with cluster using the service name and target ports
