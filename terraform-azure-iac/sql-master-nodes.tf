@@ -48,7 +48,7 @@ resource "azurerm_virtual_machine_scale_set" "sqlmaster" {
   }
 }
 
-resource "azurerm_autoscale_setting" "example" {
+resource "azurerm_autoscale_setting" "sqlmaster" {
   name                = "myAutoscaleSetting"
   resource_group_name = "${azurerm_resource_group.sql.name}"
   location            = "${azurerm_resource_group.sql.location}"
@@ -86,7 +86,7 @@ resource "azurerm_autoscale_setting" "example" {
     rule {
       metric_trigger {
         metric_name        = "Percentage CPU"
-        metric_resource_id = "${azurerm_virtual_machine_scale_set.example.id}"
+        metric_resource_id = "${azurerm_virtual_machine_scale_set.sqlmaster.id}"
         time_grain         = "PT1M"
         statistic          = "Average"
         time_window        = "PT5M"
