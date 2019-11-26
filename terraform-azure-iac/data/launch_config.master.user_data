@@ -1,0 +1,105 @@
+#!/bin/bash -ex
+
+#Initialize variables
+export CLUSTER_CIDR="100.96.0.0/11"
+export DESIRED_NODES=15
+
+start=$(date +%s)
+exec > >(tee /var/log/initializing.log | logger -t initializing -s 2>/dev/console) 2>&1
+
+/bin/systemd-machine-id-setup || echo "failed to set up ensure machine-id configured"
+
+echo "*********** MASTER nodeup config starting ***********"
+
+echo "*********** Initialise ubuntu user copy certs if required to create any admin user**********"
+echo -n <private_key> > /home/ubuntu/.ssh/id_rsa
+chmod 600 /home/ubuntu/.ssh/id_rsa
+chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa ; chmod 600 /home/ubuntu/.ssh/id_rsa
+
+
+echo "*********** Installing essentials***********"
+apt-get update
+apt-get install -y nfs-common zip unzip bc jq #Install any utility required here
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+
+echo "*********** Update race condition for nodes to wait to join the cluster ***********"
+#Add a variable CLUSTERSTATUS = MASTERNOTREADY string in some store for synchronisation
+
+
+echo "*********** Installing docker engine ***********"
+apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+apt-get update
+apt-get install -y docker-ce
+
+
+echo "*********** Installing kubeadm, kubelet and kubectl ***********"
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+deb http://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+apt-get update
+apt-get install -y kubelet=1.16.0-00 kubectl=1.16.0-00 kubeadm=1.16.0-00
+apt-mark hold kubelet kubeadm kubectl
+
+
+echo "*********** Installing CLUSTER ***********"
+kubeadm init --apiserver-advertise-address `hostname -i` --apiserver-bind-port 443 --pod-network-cidr $CLUSTER_CIDR --node-name=`hostname -f` --kubernetes-version "1.16.0"
+
+
+echo "*********** Copying kubernetes cluster cert from /etc/kubernetes/admin.conf to whereever required for usability and persistence. Probably $HOME/.kube folders ***********"
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+echo "*********** Update kube join command for nodes to join the cluster in CLSUTERSTATUS in a remote shared location ***********"
+
+echo "*********** Login to yopur docker registry if you have custom images ***********"
+
+echo "*********** Wait for all the nodes to join ***********"
+for i in `seq 1 600`; do
+  sleep 10s
+  NODES_READY=`kubectl get nodes | grep -v NAME| grep -v master | wc -l`
+  if [ $NODES_READY == $DESIRED_NODES ]; then
+      echo "All $NODES_READY are ready!"
+      break
+  fi
+done
+
+echo "*********** Labeling all nodes ***********"
+for node in $(kubectl get nodes| grep -v NAME| awk '{print $1}'); do
+  echo $node
+  kubectl label nodes $node <mylabelname>=<mylabelvalue> --overwrite
+done
+
+echo "*********** Networking plugin of choice - Calico installation with custom CIDR ***********"
+curl https://docs.projectcalico.org/v3.8/manifests/calico.yaml | sed 's/192.168.0.0\/16/100.96.0.0\/11/g' >> /home/ubuntu/calico_spec_custom_cidr_pods.yaml
+kubectl apply -f /home/ubuntu/calico_spec_custom_cidr_pods.yaml
+
+
+echo "*********** Wait for all the pods ***********"
+while [ "$(kubectl get pods --all-namespaces | grep -e 'Pending' -e 'ContainerCreating' -e 'Init:' | wc -l)" != "0" ]; do
+  sleep 30s
+done
+
+
+echo "*********** Wait for all the pods ***********"
+while [ "$(kubectl get pods --all-namespaces | grep -e 'Pending' -e 'ContainerCreating' -e 'Init:' | wc -l)" != "0" ]; do
+  sleep 30s
+done
+
+
+echo "*********** Create Stroage class ***********"
+cat > /home/ubuntu/storage_class_spec.yaml << '__EOF_SPEC'
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: azure-managed-disk-ondemand
+provisioner: kubernetes.io/azure-disk
+reclaimPolicy: Retain
+__EOF_SPEC
+kubectl apply -f /home/ubuntu/storage_class_spec.yaml
+
+
+echo "*********** Copy and files required like backup, restore, cleanup etc ***********"
+echo "base64 encrypted file" | base64 -d > /home/ubuntu/backup-latest.sh

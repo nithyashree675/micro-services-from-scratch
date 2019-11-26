@@ -1,0 +1,68 @@
+#!/bin/bash -ex
+start=$(date +%s)
+exec > >(tee /var/log/initializing.log | logger -t initializinga -s 2>/dev/console) 2>&1
+
+/bin/systemd-machine-id-setup || echo "failed to set up ensure machine-id configured"
+
+echo "*********** NODE nodeup config starting ***********"
+
+
+echo "*********** Initialise ubuntu user copy certs if required to create any admin user**********"
+echo -n <private_key> > /home/ubuntu/.ssh/id_rsa
+chmod 600 /home/ubuntu/.ssh/id_rsa
+chown ubuntu:ubuntu /home/ubuntu/.ssh/id_rsa ; chmod 600 /home/ubuntu/.ssh/id_rsa
+
+
+echo "*********** Installing docker engine ***********"
+sapt-get install -y apt-transport-https ca-certificates curl software-properties-common
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+apt-get update
+apt-get install -y docker-ce
+
+
+echo "*********** Installing kubeadm, kubelet and kubectl ***********"
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+deb http://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+apt-get update
+apt-get install -y kubelet=1.16.0-00 kubectl=1.16.0-00 kubeadm=1.16.0-00
+apt-mark hold kubelet kubeadm kubectl
+
+
+echo "*********** Installing essentials***********"
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+
+echo "*********** Wait for master to initialize the cluster ***********"
+#Read a variable CLUSTERSTATUS = MASTERNOTREADY string from some store for synchronisation where master has updated
+while [ CLUSTERSTATUS == "MASTERNOTREADY" ]; do
+  echo "MASTER is not ready"
+  sleep 5s
+done
+
+
+echo "*********** Joining the cluster ***********"
+JOINCOMMANDMASTER=CLUSTERSTATUS #Kubernetes cluster join command
+NODENAME=`hostname -f`
+JOINCOMMAND="${JOINCOMMANDMASTER:1:-1} --node-name=${NODENAME}"
+eval $JOINCOMMAND
+
+
+echo "*********** Node labeling with TAGS***********"
+#Get Instance tag value using az cli => tags
+echo "MY TAG: $tags"
+NODEMASTER=$(echo $JOINCOMMANDMASTER | awk '{print $3}' | cut -d':' -f1)
+ssh -i /home/ubuntu/.ssh/id_rsa -oStrictHostKeyChecking=no ubuntu@$NODEMASTER kubectl label nodes $NODENAME group=$tags
+
+
+echo "*********** Copy and files required like backup, restore, cleanup etc ***********"
+echo "base64 encrypted file==" | base64 -d > /home/ubuntu/prometheus-monitoring.sh
+bash /home/ubuntu/prometheus-monitoring.sh #Spin up monitoring agent on the node - node exporter in prometheus probably
+
+end=$(date +%s)
+seconds=$(($end - $start))
+printf "Time taken: $(($seconds/60))minutes"
+
+echo "*********** NODE nodeup config done ***********"
